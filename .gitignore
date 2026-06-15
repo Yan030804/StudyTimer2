@@ -1,0 +1,7 @@
+.dotnet-home/
+.nuget/
+**/bin/
+**/obj/
+dist/
+TestData/
+*.user

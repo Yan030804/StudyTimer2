@@ -1,0 +1,145 @@
+<Window x:Class="StudyTimer.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:controls="clr-namespace:StudyTimer.App.Controls"
+        Title="学习计时器" Icon="Assets/study-timer.ico" Width="1120" Height="760" MinWidth="900" MinHeight="640"
+        WindowStartupLocation="CenterScreen" Closing="Window_Closing">
+    <Grid Margin="28">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="20" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <StackPanel>
+                <TextBlock Text="学习计时器" FontSize="28" FontWeight="SemiBold" />
+                <TextBlock Text="让每一次专注都清楚可见" Foreground="{StaticResource MutedTextBrush}" Margin="0,6,0,0" />
+            </StackPanel>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                <Button Content="打开数据文件夹" Command="{Binding OpenDataFolderCommand}" />
+                <Button Content="紧凑模式" Command="{Binding CompactCommand}" Margin="0" />
+            </StackPanel>
+        </Grid>
+
+        <TabControl Grid.Row="2" Background="Transparent" BorderThickness="0">
+            <TabItem Header="计时">
+                <Grid Margin="0,20,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="20" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Border Background="{StaticResource CardBrush}" CornerRadius="16" Padding="42"
+                            BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="本次学习" Foreground="{StaticResource MutedTextBrush}" FontSize="16" HorizontalAlignment="Center" />
+                            <TextBlock Text="{Binding TimerText}" FontFamily="Consolas" FontSize="68" FontWeight="SemiBold"
+                                       HorizontalAlignment="Center" Margin="0,20,0,8" />
+                            <TextBlock Text="{Binding StatusText}" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" />
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,34,0,0">
+                                <Button Content="{Binding ToggleText}" Command="{Binding ToggleTimerCommand}"
+                                        Style="{StaticResource PrimaryButtonStyle}" MinWidth="130" />
+                                <Button Content="停止并保存" Command="{Binding StopTimerCommand}" MinWidth="130" Margin="0" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel Grid.Column="2">
+                        <Border Background="{StaticResource CardBrush}" CornerRadius="16" Padding="28"
+                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="今日累计" Foreground="{StaticResource MutedTextBrush}" />
+                                <TextBlock Text="{Binding TodayText}" FontSize="30" FontWeight="SemiBold" Margin="0,12,0,0" />
+                            </StackPanel>
+                        </Border>
+                        <Border Background="#EEF2FF" CornerRadius="16" Padding="28" Margin="0,20,0,0">
+                            <StackPanel>
+                                <TextBlock Text="数据自动保存" FontWeight="SemiBold" />
+                                <TextBlock Text="停止后写入当天文本文件；计时中每 5 秒保存一次恢复状态。"
+                                           TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}"
+                                           Margin="0,10,0,0" LineHeight="22" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="统计">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,20,0,0">
+                    <StackPanel>
+                        <Border Background="{StaticResource CardBrush}" CornerRadius="16" Padding="24"
+                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,18">
+                            <StackPanel>
+                                <TextBlock Text="最近七天" FontSize="20" FontWeight="SemiBold" />
+                                <TextBlock Text="每天的学习时间" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,8" />
+                                <controls:BarChart Height="260" ItemsSource="{Binding SevenDayPoints}"
+                                                   AutomationProperties.Name="{Binding SevenDaySummary}" />
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{StaticResource CardBrush}" CornerRadius="16" Padding="24"
+                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,0,0,18">
+                            <StackPanel>
+                                <TextBlock Text="本月周统计" FontSize="20" FontWeight="SemiBold" />
+                                <TextBlock Text="按周一至周日聚合，跨月周只计算本月日期"
+                                           Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,8" />
+                                <controls:BarChart Height="260" ItemsSource="{Binding WeeklyPoints}"
+                                                   AutomationProperties.Name="{Binding WeeklySummary}" />
+                            </StackPanel>
+                        </Border>
+                        <Border Background="{StaticResource CardBrush}" CornerRadius="16" Padding="24"
+                                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1">
+                            <StackPanel>
+                                <TextBlock Text="本年月统计" FontSize="20" FontWeight="SemiBold" />
+                                <TextBlock Text="全年十二个月学习时间" Foreground="{StaticResource MutedTextBrush}" Margin="0,4,0,8" />
+                                <controls:BarChart Height="280" ItemsSource="{Binding MonthlyPoints}"
+                                                   AutomationProperties.Name="{Binding MonthlySummary}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <TabItem Header="历史记录">
+                <Border Background="{StaticResource CardBrush}" CornerRadius="16" Padding="24"
+                        BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" Margin="0,20,0,0">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="16" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="180" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="查看日期" VerticalAlignment="Center" Margin="0,0,12,0" />
+                            <DatePicker Grid.Column="1" SelectedDate="{Binding HistoryDate, Mode=TwoWay}" Height="38" />
+                            <StackPanel Grid.Column="3" Orientation="Horizontal">
+                                <Button Content="新增" Click="AddSession_Click" Style="{StaticResource PrimaryButtonStyle}" />
+                                <Button Content="修改" Click="EditSession_Click" />
+                                <Button Content="删除" Click="DeleteSession_Click" Margin="0" />
+                            </StackPanel>
+                        </Grid>
+                        <DataGrid x:Name="HistoryGrid" Grid.Row="2" ItemsSource="{Binding HistorySessions}"
+                                  AutoGenerateColumns="False" IsReadOnly="True" CanUserAddRows="False"
+                                  SelectionMode="Single" HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                                  BorderThickness="0" RowHeight="44">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="开始时间" Binding="{Binding StartText}" Width="*" />
+                                <DataGridTextColumn Header="结束时间" Binding="{Binding EndText}" Width="*" />
+                                <DataGridTextColumn Header="学习时长" Binding="{Binding DurationText}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </Border>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</Window>
