@@ -16,30 +16,42 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private readonly StudyRecordRepository _repository;
     private readonly TimerRecoveryStore _recoveryStore;
     private readonly StatisticsService _statisticsService;
+    private readonly CsvExportService _csvExportService;
+    private readonly SubjectService _subjectService;
     private readonly StudyTimerEngine _engine = new();
     private readonly DispatcherTimer _uiTimer;
     private DateOnly _currentDate = DateOnly.FromDateTime(DateTime.Now);
     private TimeSpan _savedTodayDuration;
     private DateTime _historyDate = DateTime.Today;
+    private DateTime _statisticsAnchorDate = DateTime.Today;
+    private StatisticsPeriod _statisticsPeriod = StatisticsPeriod.SevenDays;
+    private StatisticsReport? _statisticsReport;
+    private SubjectDefinition _selectedSubject = SubjectDefinition.Uncategorized;
+    private SubjectFilterOption _selectedStatisticsSubject = SubjectFilterOption.All;
+    private SubjectFilterOption _selectedHistorySubject = SubjectFilterOption.All;
     private string _timerText = "00:00:00";
     private string _todayText = "0 分钟";
     private string _statusText = "准备开始";
     private string _toggleText = "开始学习";
-    private IReadOnlyList<ChartPoint> _sevenDayPoints = Array.Empty<ChartPoint>();
-    private IReadOnlyList<ChartPoint> _weeklyPoints = Array.Empty<ChartPoint>();
-    private IReadOnlyList<ChartPoint> _monthlyPoints = Array.Empty<ChartPoint>();
     private int _heartbeatTicks;
 
-    public MainViewModel(StudyRecordRepository repository, TimerRecoveryStore recoveryStore)
+    public MainViewModel(
+        StudyRecordRepository repository,
+        TimerRecoveryStore recoveryStore,
+        SubjectService subjectService)
     {
         _repository = repository;
         _recoveryStore = recoveryStore;
+        _subjectService = subjectService;
         _statisticsService = new StatisticsService(repository);
+        _csvExportService = new CsvExportService(repository);
+        _selectedSubject = _subjectService.LastSubject;
 
         ToggleTimerCommand = new RelayCommand(_ => ToggleTimer());
         StopTimerCommand = new RelayCommand(_ => StopAndSave(), _ => Status != TimerStatus.Stopped);
         OpenDataFolderCommand = new RelayCommand(_ => OpenDataFolder());
         CompactCommand = new RelayCommand(_ => CompactRequested?.Invoke());
+        ManageSubjectsCommand = new RelayCommand(_ => ManageSubjectsRequested?.Invoke());
         RefreshCommand = new RelayCommand(_ => RefreshAll());
 
         _uiTimer = new DispatcherTimer(DispatcherPriority.Background)
@@ -49,21 +61,34 @@ public sealed class MainViewModel : INotifyPropertyChanged
         _uiTimer.Tick += (_, _) => Tick();
         _uiTimer.Start();
 
+        ReloadSubjects();
         RefreshAll();
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
     public event Action<string>? ErrorOccurred;
     public event Action? CompactRequested;
+    public event Action? ManageSubjectsRequested;
 
+    public ObservableCollection<SubjectDefinition> ActiveSubjects { get; } = [];
+    public ObservableCollection<SubjectFilterOption> StatisticsSubjectOptions { get; } = [];
+    public ObservableCollection<SubjectFilterOption> HistorySubjectOptions { get; } = [];
     public ObservableCollection<SessionRow> HistorySessions { get; } = [];
+
     public ICommand ToggleTimerCommand { get; }
     public ICommand StopTimerCommand { get; }
     public ICommand OpenDataFolderCommand { get; }
     public ICommand CompactCommand { get; }
+    public ICommand ManageSubjectsCommand { get; }
     public ICommand RefreshCommand { get; }
+
     public TimerStatus Status => _engine.Status;
     public string DataRootPath => _repository.RootPath;
+    public SubjectService SubjectService => _subjectService;
+    public bool CanSelectSubject => Status == TimerStatus.Stopped;
+    public bool HasHistoryRecords => HistorySessions.Count > 0;
+    public bool HasNoHistoryRecords => !HasHistoryRecords;
+    public bool CanMoveHistoryNext => DateOnly.FromDateTime(HistoryDate) < DateOnly.FromDateTime(DateTime.Today);
 
     public string TimerText
     {
@@ -89,43 +114,189 @@ public sealed class MainViewModel : INotifyPropertyChanged
         private set => SetField(ref _toggleText, value);
     }
 
+    public SubjectDefinition SelectedSubject
+    {
+        get => _selectedSubject;
+        set
+        {
+            if (!CanSelectSubject || value is null || !SetField(ref _selectedSubject, value))
+            {
+                return;
+            }
+
+            _subjectService.SetLastSubject(value.Id);
+            OnPropertyChanged(nameof(CurrentSubjectName));
+        }
+    }
+
+    public string CurrentSubjectName => Status == TimerStatus.Stopped
+        ? SelectedSubject.Name
+        : _engine.ActiveSubject.Name;
+
     public DateTime HistoryDate
     {
         get => _historyDate;
         set
         {
-            if (SetField(ref _historyDate, value))
+            var normalized = value.Date > DateTime.Today ? DateTime.Today : value.Date;
+            if (SetField(ref _historyDate, normalized))
+            {
+                RefreshHistory();
+                OnPropertyChanged(nameof(CanMoveHistoryNext));
+            }
+        }
+    }
+
+    public SubjectFilterOption SelectedHistorySubject
+    {
+        get => _selectedHistorySubject;
+        set
+        {
+            if (value is not null && SetField(ref _selectedHistorySubject, value))
             {
                 RefreshHistory();
             }
         }
     }
 
-    public IReadOnlyList<ChartPoint> SevenDayPoints
+    public string HistoryTotalText { get; private set; } = "0 分钟";
+    public string HistoryCountText { get; private set; } = "0 次";
+
+    public StatisticsPeriod StatisticsPeriod
     {
-        get => _sevenDayPoints;
-        private set => SetField(ref _sevenDayPoints, value);
+        get => _statisticsPeriod;
+        private set => SetField(ref _statisticsPeriod, value);
     }
 
-    public IReadOnlyList<ChartPoint> WeeklyPoints
+    public DateTime StatisticsAnchorDate
     {
-        get => _weeklyPoints;
-        private set => SetField(ref _weeklyPoints, value);
+        get => _statisticsAnchorDate;
+        set
+        {
+            var normalized = value.Date > DateTime.Today ? DateTime.Today : value.Date;
+            if (SetField(ref _statisticsAnchorDate, normalized))
+            {
+                RefreshStatistics();
+            }
+        }
     }
 
-    public IReadOnlyList<ChartPoint> MonthlyPoints
+    public SubjectFilterOption SelectedStatisticsSubject
     {
-        get => _monthlyPoints;
-        private set => SetField(ref _monthlyPoints, value);
+        get => _selectedStatisticsSubject;
+        set
+        {
+            if (value is not null && SetField(ref _selectedStatisticsSubject, value))
+            {
+                RefreshStatistics();
+            }
+        }
     }
 
-    public string SevenDaySummary => BuildSummary(SevenDayPoints);
-    public string WeeklySummary => BuildSummary(WeeklyPoints);
-    public string MonthlySummary => BuildSummary(MonthlyPoints);
+    public IReadOnlyList<ChartPoint> StatisticsPoints => _statisticsReport?.Points ?? Array.Empty<ChartPoint>();
+    public string StatisticsTitle => _statisticsReport?.Title ?? string.Empty;
+    public string StatisticsTotalText => FormatMetric(_statisticsReport?.Summary.TotalDuration ?? TimeSpan.Zero);
+    public string StatisticsAverageText => FormatMetric(_statisticsReport?.Summary.AveragePerCalendarDay ?? TimeSpan.Zero);
+    public string StatisticsLongestDayText => _statisticsReport?.Summary.LongestDay is { } date
+        ? $"{date:M月d日} · {FormatMetric(_statisticsReport.Summary.LongestDayDuration)}"
+        : "暂无记录";
+    public string StatisticsStreakText => $"{_statisticsReport?.Summary.LongestStreakDays ?? 0} 天";
+    public bool CanNavigateStatisticsNext
+    {
+        get
+        {
+            var next = StatisticsService.MoveAnchor(StatisticsPeriod,
+                DateOnly.FromDateTime(StatisticsAnchorDate), 1);
+            var (start, _, _) = StatisticsService.GetPlotRange(StatisticsPeriod, next);
+            return start <= DateOnly.FromDateTime(DateTime.Today);
+        }
+    }
+
+    public string StatisticsAccessibleSummary =>
+        $"{StatisticsTitle}，总时长 {StatisticsTotalText}，日均 {StatisticsAverageText}，" +
+        $"最长学习日 {StatisticsLongestDayText}，最长连续 {StatisticsStreakText}";
+
+    public void SetStatisticsPeriod(StatisticsPeriod period)
+    {
+        StatisticsPeriod = period;
+        StatisticsAnchorDate = DateTime.Today;
+        RefreshStatistics();
+    }
+
+    public void NavigateStatistics(int direction)
+    {
+        if (direction > 0 && !CanNavigateStatisticsNext)
+        {
+            return;
+        }
+
+        var next = StatisticsService.MoveAnchor(StatisticsPeriod,
+            DateOnly.FromDateTime(StatisticsAnchorDate), direction);
+        StatisticsAnchorDate = next.ToDateTime(TimeOnly.MinValue);
+    }
+
+    public void GoToCurrentStatisticsPeriod() => StatisticsAnchorDate = DateTime.Today;
+
+    public void NavigateHistory(int direction)
+    {
+        if (direction > 0 && !CanMoveHistoryNext)
+        {
+            return;
+        }
+
+        HistoryDate = HistoryDate.AddDays(direction);
+    }
+
+    public void GoToTodayHistory() => HistoryDate = DateTime.Today;
+
+    public void ExportCurrentRange(string path)
+    {
+        if (_statisticsReport is null)
+        {
+            return;
+        }
+
+        _csvExportService.ExportRange(path,
+            _statisticsReport.EffectiveStart,
+            _statisticsReport.EffectiveEnd,
+            SelectedStatisticsSubject.SubjectId);
+    }
+
+    public void ExportAll(string path) => _csvExportService.ExportAll(path);
+
+    public void ReloadSubjects()
+    {
+        var selectedSubjectId = SelectedSubject?.Id ?? _subjectService.Settings.LastSubjectId;
+        var statisticsFilterId = SelectedStatisticsSubject?.SubjectId;
+        var historyFilterId = SelectedHistorySubject?.SubjectId;
+
+        ActiveSubjects.Clear();
+        foreach (var subject in _subjectService.ActiveSubjects)
+        {
+            ActiveSubjects.Add(subject);
+        }
+
+        SelectedSubject = ActiveSubjects.FirstOrDefault(subject => subject.Id == selectedSubjectId)
+            ?? _subjectService.LastSubject;
+
+        RebuildFilterOptions(StatisticsSubjectOptions);
+        RebuildFilterOptions(HistorySubjectOptions);
+        SelectedStatisticsSubject = StatisticsSubjectOptions.FirstOrDefault(option => option.SubjectId == statisticsFilterId)
+            ?? SubjectFilterOption.All;
+        SelectedHistorySubject = HistorySubjectOptions.FirstOrDefault(option => option.SubjectId == historyFilterId)
+            ?? SubjectFilterOption.All;
+        OnPropertyChanged(nameof(CurrentSubjectName));
+    }
 
     public void Restore(TimerSnapshot snapshot)
     {
         _engine.Restore(snapshot);
+        var restored = ActiveSubjects.FirstOrDefault(subject => subject.Id == _engine.ActiveSubject.Id);
+        if (restored is not null)
+        {
+            _selectedSubject = restored;
+        }
+
         UpdateTimerStateText();
         Tick();
         SaveRecovery();
@@ -162,64 +333,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }, "保存恢复状态失败");
     }
 
-    public void AddHistorySession(StudySession session)
-    {
-        RunSafely(() =>
-        {
-            var date = DateOnly.FromDateTime(HistoryDate);
-            var record = _repository.Load(date);
-            _repository.Save(new DailyStudyRecord(date,
-                record.Sessions.Append(session).OrderBy(item => item.Start).ToArray()));
-            RefreshAll();
-        }, "新增学习记录失败");
-    }
+    public void AddHistorySession(StudySession session) => UpdateHistoryRecord(null, session, false);
 
-    public void UpdateHistorySession(StudySession original, StudySession replacement)
-    {
-        RunSafely(() =>
-        {
-            var date = DateOnly.FromDateTime(HistoryDate);
-            var record = _repository.Load(date);
-            var replaced = false;
-            var sessions = record.Sessions.Select(item =>
-                {
-                    if (!replaced && item == original)
-                    {
-                        replaced = true;
-                        return replacement;
-                    }
+    public void UpdateHistorySession(StudySession original, StudySession replacement) =>
+        UpdateHistoryRecord(original, replacement, false);
 
-                    return item;
-                })
-                .OrderBy(item => item.Start).ToArray();
-            _repository.Save(new DailyStudyRecord(date, sessions));
-            RefreshAll();
-        }, "修改学习记录失败");
-    }
-
-    public void DeleteHistorySession(StudySession session)
-    {
-        RunSafely(() =>
-        {
-            var date = DateOnly.FromDateTime(HistoryDate);
-            var record = _repository.Load(date);
-            var removed = false;
-            var sessions = new List<StudySession>();
-            foreach (var item in record.Sessions)
-            {
-                if (!removed && item == session)
-                {
-                    removed = true;
-                    continue;
-                }
-
-                sessions.Add(item);
-            }
-
-            _repository.Save(new DailyStudyRecord(date, sessions));
-            RefreshAll();
-        }, "删除学习记录失败");
-    }
+    public void DeleteHistorySession(StudySession session) => UpdateHistoryRecord(session, null, true);
 
     public void RefreshAll()
     {
@@ -227,12 +346,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             _currentDate = DateOnly.FromDateTime(DateTime.Now);
             _savedTodayDuration = _repository.GetDuration(_currentDate);
-            SevenDayPoints = _statisticsService.GetLastSevenDays(_currentDate);
-            WeeklyPoints = _statisticsService.GetWeeksOfMonth(_currentDate.Year, _currentDate.Month);
-            MonthlyPoints = _statisticsService.GetMonthsOfYear(_currentDate.Year);
-            OnPropertyChanged(nameof(SevenDaySummary));
-            OnPropertyChanged(nameof(WeeklySummary));
-            OnPropertyChanged(nameof(MonthlySummary));
+            RefreshStatistics();
             RefreshHistory();
             Tick();
         }, "读取学习记录失败");
@@ -246,7 +360,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             switch (Status)
             {
                 case TimerStatus.Stopped:
-                    _engine.Start(now);
+                    _engine.Start(now, SelectedSubject);
                     break;
                 case TimerStatus.Running:
                     _engine.Pause(now);
@@ -273,9 +387,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
 
         TimerText = DurationFormatter.Clock(_engine.GetElapsed(now));
-        var currentToday = GetDurationForDate(_engine.GetSegments(now), today);
-        TodayText = DurationFormatter.Friendly(_savedTodayDuration + currentToday);
-
+        TodayText = DurationFormatter.Friendly(_savedTodayDuration + GetDurationForDate(_engine.GetSegments(now), today));
         if (Status != TimerStatus.Stopped && ++_heartbeatTicks >= 20)
         {
             _heartbeatTicks = 0;
@@ -302,7 +414,27 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
 
         OnPropertyChanged(nameof(Status));
+        OnPropertyChanged(nameof(CanSelectSubject));
+        OnPropertyChanged(nameof(CurrentSubjectName));
         (StopTimerCommand as RelayCommand)?.RaiseCanExecuteChanged();
+    }
+
+    private void RefreshStatistics()
+    {
+        _statisticsReport = _statisticsService.GetReport(
+            StatisticsPeriod,
+            DateOnly.FromDateTime(StatisticsAnchorDate),
+            DateOnly.FromDateTime(DateTime.Today),
+            SelectedStatisticsSubject.SubjectId);
+
+        OnPropertyChanged(nameof(StatisticsPoints));
+        OnPropertyChanged(nameof(StatisticsTitle));
+        OnPropertyChanged(nameof(StatisticsTotalText));
+        OnPropertyChanged(nameof(StatisticsAverageText));
+        OnPropertyChanged(nameof(StatisticsLongestDayText));
+        OnPropertyChanged(nameof(StatisticsStreakText));
+        OnPropertyChanged(nameof(CanNavigateStatisticsNext));
+        OnPropertyChanged(nameof(StatisticsAccessibleSummary));
     }
 
     private void RefreshHistory()
@@ -310,13 +442,70 @@ public sealed class MainViewModel : INotifyPropertyChanged
         RunSafely(() =>
         {
             HistorySessions.Clear();
-            var record = _repository.Load(DateOnly.FromDateTime(HistoryDate));
-            foreach (var session in record.Sessions)
+            var sessions = StudyRecordRepository.FilterSessions(
+                _repository.Load(DateOnly.FromDateTime(HistoryDate)).Sessions,
+                SelectedHistorySubject.SubjectId).ToArray();
+            foreach (var session in sessions)
             {
-                HistorySessions.Add(new SessionRow(session));
+                HistorySessions.Add(new SessionRow(session, ResolveSubjectColor(session.SubjectId)));
             }
+
+            var total = TimeSpan.FromTicks(sessions.Sum(session => session.Duration.Ticks));
+            HistoryTotalText = DurationFormatter.Friendly(total);
+            HistoryCountText = $"{sessions.Length} 次";
+            OnPropertyChanged(nameof(HistoryTotalText));
+            OnPropertyChanged(nameof(HistoryCountText));
+            OnPropertyChanged(nameof(HasHistoryRecords));
+            OnPropertyChanged(nameof(HasNoHistoryRecords));
         }, "读取当天明细失败");
     }
+
+    private void UpdateHistoryRecord(StudySession? original, StudySession? replacement, bool delete)
+    {
+        RunSafely(() =>
+        {
+            var date = DateOnly.FromDateTime(HistoryDate);
+            var record = _repository.Load(date);
+            var sessions = new List<StudySession>();
+            var handled = false;
+            foreach (var item in record.Sessions)
+            {
+                if (!handled && original is not null && item == original)
+                {
+                    handled = true;
+                    if (!delete && replacement is not null)
+                    {
+                        sessions.Add(replacement);
+                    }
+                    continue;
+                }
+
+                sessions.Add(item);
+            }
+
+            if (original is null && replacement is not null)
+            {
+                sessions.Add(replacement);
+            }
+
+            _repository.Save(new DailyStudyRecord(date, sessions.OrderBy(item => item.Start).ToArray()));
+            RefreshAll();
+        }, delete ? "删除学习记录失败" : original is null ? "新增学习记录失败" : "修改学习记录失败");
+    }
+
+    private void RebuildFilterOptions(ObservableCollection<SubjectFilterOption> target)
+    {
+        target.Clear();
+        target.Add(SubjectFilterOption.All);
+        foreach (var subject in _subjectService.Subjects)
+        {
+            target.Add(new SubjectFilterOption(subject.Id, subject.Name + (subject.IsArchived ? "（已归档）" : string.Empty)));
+        }
+    }
+
+    private string ResolveSubjectColor(Guid id) =>
+        _subjectService.Subjects.FirstOrDefault(subject => subject.Id == id)?.Color
+        ?? SubjectDefinition.UncategorizedColor;
 
     private void OpenDataFolder()
     {
@@ -357,8 +546,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
         return TimeSpan.FromTicks(ticks);
     }
 
-    private static string BuildSummary(IEnumerable<ChartPoint> points) => string.Join("；",
-        points.Select(point => $"{point.Label.Replace("\n", " ")} {DurationFormatter.Friendly(point.Duration)}"));
+    private static string FormatMetric(TimeSpan value)
+    {
+        var totalHours = (long)Math.Floor(value.TotalHours);
+        return totalHours > 0 ? $"{totalHours} 小时 {value.Minutes} 分钟" : $"{value.Minutes} 分钟";
+    }
 
     private bool SetField<T>(ref T field, T value, [CallerMemberName] string? propertyName = null)
     {

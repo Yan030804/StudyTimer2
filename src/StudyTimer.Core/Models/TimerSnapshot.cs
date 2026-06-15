@@ -11,4 +11,6 @@ public sealed record TimerSnapshot(
     TimerStatus Status,
     DateTime? ActiveStartedAt,
     IReadOnlyList<StudySession> CompletedSegments,
-    DateTime LastHeartbeat);
+    DateTime LastHeartbeat,
+    Guid? ActiveSubjectId = null,
+    string? ActiveSubjectName = null);

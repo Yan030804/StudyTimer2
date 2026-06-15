@@ -2,7 +2,11 @@ namespace StudyTimer.Core.Models;
 
 public sealed record StudySession
 {
-    public StudySession(DateTime start, DateTime end)
+    public StudySession(
+        DateTime start,
+        DateTime end,
+        Guid? subjectId = null,
+        string? subjectName = null)
     {
         if (end <= start)
         {
@@ -11,11 +15,22 @@ public sealed record StudySession
 
         Start = start;
         End = end;
+        SubjectId = subjectId ?? SubjectDefinition.UncategorizedId;
+        SubjectName = string.IsNullOrWhiteSpace(subjectName)
+            ? SubjectDefinition.UncategorizedName
+            : subjectName.Trim();
     }
 
     public DateTime Start { get; }
 
     public DateTime End { get; }
 
+    public Guid SubjectId { get; }
+
+    public string SubjectName { get; }
+
     public TimeSpan Duration => End - Start;
+
+    public StudySession WithSubject(SubjectDefinition subject) =>
+        new(Start, End, subject.Id, subject.Name);
 }

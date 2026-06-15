@@ -6,10 +6,13 @@ public sealed class StudyTimerEngine
 {
     private readonly List<StudySession> _completedSegments = [];
     private DateTime? _activeStartedAt;
+    private SubjectDefinition _activeSubject = SubjectDefinition.Uncategorized;
 
     public TimerStatus Status { get; private set; } = TimerStatus.Stopped;
 
-    public void Start(DateTime now)
+    public SubjectDefinition ActiveSubject => _activeSubject;
+
+    public void Start(DateTime now, SubjectDefinition? subject = null)
     {
         if (Status != TimerStatus.Stopped)
         {
@@ -17,6 +20,7 @@ public sealed class StudyTimerEngine
         }
 
         _completedSegments.Clear();
+        _activeSubject = subject ?? SubjectDefinition.Uncategorized;
         _activeStartedAt = now;
         Status = TimerStatus.Running;
     }
@@ -30,7 +34,7 @@ public sealed class StudyTimerEngine
 
         if (now > _activeStartedAt.Value)
         {
-            _completedSegments.Add(new StudySession(_activeStartedAt.Value, now));
+            _completedSegments.Add(CreateSession(_activeStartedAt.Value, now));
         }
 
         _activeStartedAt = null;
@@ -57,7 +61,7 @@ public sealed class StudyTimerEngine
 
         if (Status == TimerStatus.Running && _activeStartedAt is not null && now > _activeStartedAt.Value)
         {
-            _completedSegments.Add(new StudySession(_activeStartedAt.Value, now));
+            _completedSegments.Add(CreateSession(_activeStartedAt.Value, now));
         }
 
         var result = _completedSegments.ToArray();
@@ -69,6 +73,7 @@ public sealed class StudyTimerEngine
     {
         _completedSegments.Clear();
         _activeStartedAt = null;
+        _activeSubject = SubjectDefinition.Uncategorized;
         Status = TimerStatus.Stopped;
     }
 
@@ -88,27 +93,39 @@ public sealed class StudyTimerEngine
         var segments = new List<StudySession>(_completedSegments);
         if (Status == TimerStatus.Running && _activeStartedAt is not null && now > _activeStartedAt.Value)
         {
-            segments.Add(new StudySession(_activeStartedAt.Value, now));
+            segments.Add(CreateSession(_activeStartedAt.Value, now));
         }
 
         return segments;
     }
 
-    public TimerSnapshot CreateSnapshot(DateTime heartbeat) =>
-        new(Status, _activeStartedAt, _completedSegments.ToArray(), heartbeat);
+    public TimerSnapshot CreateSnapshot(DateTime heartbeat) => new(
+        Status,
+        _activeStartedAt,
+        _completedSegments.ToArray(),
+        heartbeat,
+        _activeSubject.Id,
+        _activeSubject.Name);
 
     public void Restore(TimerSnapshot snapshot)
     {
         Reset();
         _completedSegments.AddRange(snapshot.CompletedSegments);
+        _activeSubject = new SubjectDefinition(
+            snapshot.ActiveSubjectId ?? snapshot.CompletedSegments.LastOrDefault()?.SubjectId ?? SubjectDefinition.UncategorizedId,
+            snapshot.ActiveSubjectName ?? snapshot.CompletedSegments.LastOrDefault()?.SubjectName ?? SubjectDefinition.UncategorizedName,
+            SubjectDefinition.UncategorizedColor);
 
         if (snapshot.Status == TimerStatus.Running &&
             snapshot.ActiveStartedAt is not null &&
             snapshot.LastHeartbeat > snapshot.ActiveStartedAt.Value)
         {
-            _completedSegments.Add(new StudySession(snapshot.ActiveStartedAt.Value, snapshot.LastHeartbeat));
+            _completedSegments.Add(CreateSession(snapshot.ActiveStartedAt.Value, snapshot.LastHeartbeat));
         }
 
         Status = TimerStatus.Paused;
     }
+
+    private StudySession CreateSession(DateTime start, DateTime end) =>
+        new(start, end, _activeSubject.Id, _activeSubject.Name);
 }
