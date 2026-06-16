@@ -23,4 +23,5 @@ public sealed record StatisticsReport(
     DateOnly EffectiveEnd,
     string Title,
     IReadOnlyList<ChartPoint> Points,
+    IReadOnlyList<SubjectSharePoint> SubjectShares,
     StatisticsSummary Summary);

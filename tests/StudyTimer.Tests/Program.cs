@@ -11,8 +11,8 @@ runner.Run("手工编辑的无效行不会破坏有效记录", TestHandEditedRec
 runner.Run("科目新增判重改名归档恢复", TestSubjectLifecycle);
 runner.Run("计时暂停恢复全过程保留科目", TestTimerEngineSubject);
 runner.Run("异常恢复保留科目并只计算到心跳", TestRecoverySnapshotSubject);
-runner.Run("七天统计支持科目筛选和四项摘要", TestSevenDayStatisticsSummary);
-runner.Run("当前月平均值不计入未来日期", TestCurrentMonthEffectiveRange);
+runner.Run("七天统计支持科目筛选、摘要和全部科目占比", TestSevenDayStatisticsSummary);
+runner.Run("当前月平均值和科目占比不计入未来日期", TestCurrentMonthEffectiveRange);
 runner.Run("历史月按周统计且周一为起点", TestWeeklyStatistics);
 runner.Run("年度统计覆盖闰年和十二个月", TestYearStatistics);
 runner.Run("统计周期导航步长正确", TestStatisticsNavigation);
@@ -155,31 +155,46 @@ static void TestSevenDayStatisticsSummary()
     var today = new DateOnly(2026, 6, 15);
     var math = NewSubject("数学");
     var english = NewSubject("英语");
+    var archived = new SubjectDefinition(Guid.NewGuid(), "历史科目", "#D97706", IsArchived: true);
     SaveHours(repository, today.AddDays(-4), math, 1);
     SaveHours(repository, today.AddDays(-3), math, 2);
     SaveHours(repository, today.AddDays(-2), math, 3);
     SaveHours(repository, today.AddDays(-2), english, 1);
+    SaveHours(repository, today.AddDays(-1), archived, 2);
 
     var report = new StatisticsService(repository)
-        .GetReport(StatisticsPeriod.SevenDays, today, today, math.Id);
+        .GetReport(StatisticsPeriod.SevenDays, today, today, math.Id, [math, english, archived]);
     Assert.Equal(7, report.Points.Count);
     Assert.Equal(TimeSpan.FromHours(6), report.Summary.TotalDuration);
     Assert.Equal(TimeSpan.FromTicks(TimeSpan.FromHours(6).Ticks / 7), report.Summary.AveragePerCalendarDay);
     Assert.Equal(today.AddDays(-2), report.Summary.LongestDay);
     Assert.Equal(TimeSpan.FromHours(3), report.Summary.LongestDayDuration);
     Assert.Equal(3, report.Summary.LongestStreakDays);
+
+    Assert.Equal(3, report.SubjectShares.Count);
+    Assert.Equal(TimeSpan.FromHours(6), report.SubjectShares.Single(item => item.SubjectId == math.Id).Duration);
+    Assert.Equal(TimeSpan.FromHours(1), report.SubjectShares.Single(item => item.SubjectId == english.Id).Duration);
+    Assert.Equal(TimeSpan.FromHours(2), report.SubjectShares.Single(item => item.SubjectId == archived.Id).Duration);
+    Assert.Equal("历史科目", report.SubjectShares.Single(item => item.SubjectId == archived.Id).SubjectName);
+    Assert.True(Math.Abs(report.SubjectShares.Sum(item => item.Percentage) - 100) < 0.0001);
 }
 
 static void TestCurrentMonthEffectiveRange()
 {
     var repository = NewRepository("current-month");
     var today = new DateOnly(2026, 6, 15);
-    SaveHours(repository, new DateOnly(2026, 6, 1), NewSubject("数学"), 15);
+    var math = NewSubject("数学");
+    var english = NewSubject("英语");
+    SaveHours(repository, new DateOnly(2026, 6, 1), math, 15);
+    SaveHours(repository, new DateOnly(2026, 6, 20), english, 10);
     var report = new StatisticsService(repository)
-        .GetReport(StatisticsPeriod.Month, today, today);
+        .GetReport(StatisticsPeriod.Month, today, today, subjectCatalog: [math, english]);
     Assert.Equal(new DateOnly(2026, 6, 30), report.PlotEnd);
     Assert.Equal(today, report.EffectiveEnd);
     Assert.Equal(TimeSpan.FromHours(1), report.Summary.AveragePerCalendarDay);
+    Assert.Equal(1, report.SubjectShares.Count);
+    Assert.Equal(math.Id, report.SubjectShares.Single().SubjectId);
+    Assert.Equal(TimeSpan.FromHours(15), report.SubjectShares.Single().Duration);
 }
 
 static void TestWeeklyStatistics()

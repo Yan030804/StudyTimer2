@@ -10,7 +10,8 @@ public sealed class StatisticsService(StudyRecordRepository repository)
         StatisticsPeriod period,
         DateOnly anchorDate,
         DateOnly today,
-        Guid? subjectId = null)
+        Guid? subjectId = null,
+        IReadOnlyList<SubjectDefinition>? subjectCatalog = null)
     {
         var (plotStart, plotEnd, title) = GetPlotRange(period, anchorDate);
         var effectiveEnd = plotEnd > today ? today : plotEnd;
@@ -32,6 +33,7 @@ public sealed class StatisticsService(StudyRecordRepository repository)
             effectiveEnd,
             title,
             points,
+            BuildSubjectShares(effectiveStart, effectiveEnd, subjectCatalog),
             BuildSummary(effectiveStart, effectiveEnd, subjectId));
     }
 
@@ -160,6 +162,55 @@ public sealed class StatisticsService(StudyRecordRepository repository)
             longest.Date == default ? null : longest.Date,
             longest.Duration,
             longestStreak);
+    }
+
+    private IReadOnlyList<SubjectSharePoint> BuildSubjectShares(
+        DateOnly start,
+        DateOnly end,
+        IReadOnlyList<SubjectDefinition>? subjectCatalog)
+    {
+        if (end < start)
+        {
+            return Array.Empty<SubjectSharePoint>();
+        }
+
+        var subjects = subjectCatalog?.ToDictionary(subject => subject.Id)
+            ?? new Dictionary<Guid, SubjectDefinition>();
+        var grouped = repository.LoadRange(start, end)
+            .SelectMany(record => record.Sessions)
+            .GroupBy(session => session.SubjectId)
+            .Select(group =>
+            {
+                var total = TimeSpan.FromTicks(group.Sum(session => session.Duration.Ticks));
+                var first = group.First();
+                subjects.TryGetValue(group.Key, out var subject);
+                return new
+                {
+                    SubjectId = group.Key,
+                    SubjectName = subject?.Name ?? first.SubjectName,
+                    Color = subject?.Color ?? SubjectDefinition.UncategorizedColor,
+                    Duration = total
+                };
+            })
+            .Where(item => item.Duration > TimeSpan.Zero)
+            .OrderByDescending(item => item.Duration)
+            .ThenBy(item => item.SubjectName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        var totalTicks = grouped.Sum(item => item.Duration.Ticks);
+        if (totalTicks <= 0)
+        {
+            return Array.Empty<SubjectSharePoint>();
+        }
+
+        return grouped
+            .Select(item => new SubjectSharePoint(
+                item.SubjectId,
+                item.SubjectName,
+                item.Color,
+                item.Duration,
+                item.Duration.Ticks * 100.0 / totalTicks))
+            .ToArray();
     }
 
     private TimeSpan SumRange(DateOnly start, DateOnly end, Guid? subjectId)

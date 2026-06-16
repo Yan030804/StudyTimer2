@@ -125,13 +125,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
 
             _subjectService.SetLastSubject(value.Id);
-            OnPropertyChanged(nameof(CurrentSubjectName));
+            NotifyCurrentSubjectProperties();
         }
     }
 
     public string CurrentSubjectName => Status == TimerStatus.Stopped
         ? SelectedSubject.Name
         : _engine.ActiveSubject.Name;
+
+    public string CurrentSubjectColor => ResolveSubjectColor(CurrentSubjectId);
+
+    public string CurrentSubjectBackground => SubjectColorHelper.SoftBackground(CurrentSubjectColor);
 
     public DateTime HistoryDate
     {
@@ -194,6 +198,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     public IReadOnlyList<ChartPoint> StatisticsPoints => _statisticsReport?.Points ?? Array.Empty<ChartPoint>();
+    public IReadOnlyList<SubjectSharePoint> StatisticsSubjectShares =>
+        _statisticsReport?.SubjectShares ?? Array.Empty<SubjectSharePoint>();
     public string StatisticsTitle => _statisticsReport?.Title ?? string.Empty;
     public string StatisticsTotalText => FormatMetric(_statisticsReport?.Summary.TotalDuration ?? TimeSpan.Zero);
     public string StatisticsAverageText => FormatMetric(_statisticsReport?.Summary.AveragePerCalendarDay ?? TimeSpan.Zero);
@@ -285,7 +291,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             ?? SubjectFilterOption.All;
         SelectedHistorySubject = HistorySubjectOptions.FirstOrDefault(option => option.SubjectId == historyFilterId)
             ?? SubjectFilterOption.All;
-        OnPropertyChanged(nameof(CurrentSubjectName));
+        NotifyCurrentSubjectProperties();
     }
 
     public void Restore(TimerSnapshot snapshot)
@@ -415,7 +421,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         OnPropertyChanged(nameof(Status));
         OnPropertyChanged(nameof(CanSelectSubject));
-        OnPropertyChanged(nameof(CurrentSubjectName));
+        NotifyCurrentSubjectProperties();
         (StopTimerCommand as RelayCommand)?.RaiseCanExecuteChanged();
     }
 
@@ -425,9 +431,11 @@ public sealed class MainViewModel : INotifyPropertyChanged
             StatisticsPeriod,
             DateOnly.FromDateTime(StatisticsAnchorDate),
             DateOnly.FromDateTime(DateTime.Today),
-            SelectedStatisticsSubject.SubjectId);
+            SelectedStatisticsSubject.SubjectId,
+            _subjectService.Subjects);
 
         OnPropertyChanged(nameof(StatisticsPoints));
+        OnPropertyChanged(nameof(StatisticsSubjectShares));
         OnPropertyChanged(nameof(StatisticsTitle));
         OnPropertyChanged(nameof(StatisticsTotalText));
         OnPropertyChanged(nameof(StatisticsAverageText));
@@ -506,6 +514,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
     private string ResolveSubjectColor(Guid id) =>
         _subjectService.Subjects.FirstOrDefault(subject => subject.Id == id)?.Color
         ?? SubjectDefinition.UncategorizedColor;
+
+    private Guid CurrentSubjectId => Status == TimerStatus.Stopped
+        ? SelectedSubject.Id
+        : _engine.ActiveSubject.Id;
+
+    private void NotifyCurrentSubjectProperties()
+    {
+        OnPropertyChanged(nameof(CurrentSubjectName));
+        OnPropertyChanged(nameof(CurrentSubjectColor));
+        OnPropertyChanged(nameof(CurrentSubjectBackground));
+    }
 
     private void OpenDataFolder()
     {
